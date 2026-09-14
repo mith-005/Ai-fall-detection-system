@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI - Fall Detection Station</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+  <!-- Header -->
+  <header class="site-header">
+    <div class="brand">
+      <span class="brand-name">VigilAI</span>
+      <span class="brand-version">v2.4</span>
+    </div>
+    <div class="header-right">
+      <span class="status-line">
+        <span class="live-dot"></span>
+        Monitoring active
+      </span>
+      <span id="clock" class="clock">00:00:00</span>
+    </div>
+  </header>
+
+  <main class="main">
+
+    <div class="grid">
+
+      <!-- Video Feed Column -->
+      <div class="feed-column">
+        <div class="feed-heading">
+          <h1>Live feed</h1>
+          <span class="feed-meta">720p · 30fps</span>
+        </div>
+
+        <div class="feed-frame">
+          <img id="stream-view"
+               src="{{ url_for('video_feed') }}"
+               alt="Active detection stream"
+               onerror="this.parentElement.innerHTML='<div class=&quot;feed-empty&quot;><i data-lucide=&quot;video-off&quot;></i><p>Stream on standby</p><p class=&quot;feed-empty-sub&quot;>Start a camera or video source below</p></div>'; lucide.createIcons();">
+        </div>
+
+        <div class="feed-footer">
+          <p class="confirm-note">Confirmation window: <span>3.0s</span> before an alert fires</p>
+          <a href="/reset_webcam" class="switch-link">Switch to live webcam</a>
+        </div>
+      </div>
+
+      <!-- Sidebar -->
+      <div class="sidebar">
+
+        <section>
+          <h2 class="section-label">Test with a recording</h2>
+          <form action="/upload_video" method="POST" enctype="multipart/form-data" class="upload-form">
+            <label for="video_file" class="upload-drop">
+              <span id="file-label" class="upload-title">Choose a file to analyze</span>
+              <span class="upload-sub">MP4, AVI, MOV — up to 300MB</span>
+              <input id="video_file" name="video_file" type="file" accept=".mp4,.avi,.mov,.mkv" required/>
+            </label>
+            <button type="submit" class="upload-button">Analyze recording</button>
+          </form>
+        </section>
+
+        <section>
+          <h2 class="section-label">Where alerts go</h2>
+          <ul class="channel-list">
+            <li>
+              <span class="channel-name"><i data-lucide="send"></i>Telegram bot</span>
+              <span class="channel-status">Ready</span>
+            </li>
+            <li>
+              <span class="channel-name"><i data-lucide="smartphone"></i>Phone push (ntfy)</span>
+              <span class="channel-status">Listening</span>
+            </li>
+            <li>
+              <span class="channel-name"><i data-lucide="mail"></i>Email snapshot</span>
+              <span class="channel-status">Connected</span>
+            </li>
+          </ul>
+        </section>
+
+      </div>
+    </div>
+
+    <!-- Incident Log Table (6 Columns) -->
+    <section>
+      <div class="log-heading">
+        <h2>Incident log</h2>
+        <button onclick="fetchLogs()" class="refresh-button">
+          <i data-lucide="refresh-cw"></i>
+          Refresh
+        </button>
+      </div>
+
+      <table class="log-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Time</th>
+            <th>Torso Angle</th>
+            <th>Aspect Ratio</th>
+            <th>Event</th>
+            <th class="align-right">Dispatch</th>
+          </tr>
+        </thead>
+        <tbody id="log-table">
+          <tr><td colspan="6" class="log-empty">Loading incident log…</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+  </main>
+
+  <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+# Virtual Environment
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Large Datasets & Media
+data/
+runs/
+*.whl
+*.pt
+*.onnx
+*.db
+*.sqlite3
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.jpg
+*.png
+*.zip
+
+# Local Secrets
+.env
