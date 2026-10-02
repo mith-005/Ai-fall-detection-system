@@ -30,5 +30,16 @@ class DatabaseHandler:
             cursor.execute("""
                 INSERT INTO fall_events (timestamp, aspect_ratio, torso_angle, snapshot_path)
                 VALUES (?, ?, ?, ?)
-            """, (timestamp, aspect_ratio, torso_angle, str(snapshot_path)))
+            """, (timestamp, round(float(aspect_ratio), 2), round(float(torso_angle), 2), str(snapshot_path)))
             conn.commit()
+
+    def get_recent_events(self, limit=10):
+        """Retrieves latest fall incidents for UI dashboard display."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM fall_events ORDER BY id DESC LIMIT ?
+            """, (limit,))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]

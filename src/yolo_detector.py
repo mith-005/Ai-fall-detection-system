@@ -33,7 +33,10 @@ class YOLODetector:
             if conf >= self.conf_thresh:
                 cls_id = int(box.cls[0])
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
-                # Return bounding box coordinates and confidence
-                detected_boxes.append((x1, y1, x2, y2, conf))
+
+                label = self.model.names.get(cls_id, str(cls_id))
+                
+                # Append coordinates, confidence, class ID, and string label
+                detected_boxes.append((x1, y1, x2, y2, conf, cls_id, label))
 
         return detected_boxes
