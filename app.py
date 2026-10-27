@@ -1,4 +1,3 @@
-
 import sys
 import time
 import sqlite3
@@ -47,6 +46,7 @@ app = Flask(
 
 # 3. Import Project Modules
 from config import Config
+from yolo_detector import YOLODetector
 from posture_engine import PostureEngine
 from temporal_filter import TemporalFilter
 from alert_dispatcher import AlertDispatcher
@@ -66,7 +66,8 @@ app.config['UPLOAD_FOLDER'] = str(UPLOAD_DIR)
 # Global Video Feed State: 0 for Webcam, string path for uploaded video
 CURRENT_VIDEO_SOURCE = 0
 
-# Initialize Subsystems
+# Initialize Subsystems (YOLOv8 initialized on CUDA if available)
+yolo_detector = YOLODetector()
 ai_engine = PostureEngine()
 dispatcher = AlertDispatcher()
 db_handler = DatabaseHandler()
@@ -78,24 +79,47 @@ def allowed_file(filename):
 
 
 def generate_video_frames(source):
-    """Encodes and yields multipart MJPEG stream from active source."""
+    """Encodes and yields multipart MJPEG stream with high sharpness and low latency."""
     is_webcam = isinstance(source, int) or str(source).isdigit()
 
     if is_webcam:
-        cap = cv2.VideoCapture(int(source), cv2.CAP_DSHOW)
+        cam_idx = int(source)
+        cap = cv2.VideoCapture(cam_idx, cv2.CAP_DSHOW)
+        if not cap.isOpened():
+            cap = cv2.VideoCapture(cam_idx)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+        video_fps = 30.0
     else:
         cap = cv2.VideoCapture(str(source))
+        video_fps = cap.get(cv2.CAP_PROP_FPS)
+        if video_fps <= 0 or video_fps > 120:
+            video_fps = 30.0
 
     temporal_filter = TemporalFilter(confirmation_seconds=Config.CONFIRMATION_TIME_SEC)
     alert_already_dispatched = False
 
+    # Run YOLO every 3 frames on CUDA to preserve high frame-rate throughput
+    frame_count = 0
+    YOLO_CADENCE = 3
+    cached_boxes = []
+
+    # High-quality JPEG encoding parameters
+    encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), 88]
+
+    # Target frame time to avoid accumulation delay
+    target_frame_time = 1.0 / video_fps
+
     while True:
+        loop_start = time.time()
+
         if not cap.isOpened():
             break
 
         success, frame = cap.read()
 
-        # Handle stream completion / loop video files
+        # Handle stream end or loop video files
         if not success or frame is None:
             if not is_webcam:
                 cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
@@ -103,36 +127,86 @@ def generate_video_frames(source):
             else:
                 break
 
-        # 1. Biomechanical Posture & Kinematics Processing
+        frame_count += 1
+        h, w = frame.shape[:2]
+
+        # -------------------------------------------------------------
+        # MODULE 3: YOLOv8 SPATIAL HUMAN LOCALIZATION (STRICTLY FIRST)
+        # -------------------------------------------------------------
+        if frame_count % YOLO_CADENCE == 0 or len(cached_boxes) == 0:
+            cached_boxes = yolo_detector.detect_persons(frame)
+
+        # Clutter Suppression: Reject small background items (shoes, steps, mats)
+        primary_box = None
+        if len(cached_boxes) > 0:
+            min_area = (w * h) * 0.02  # Must be at least 2% of total frame area
+            filtered_candidates = []
+
+            for b in cached_boxes:
+                bx1, by1, bx2, by2, bconf = b[0], b[1], b[2], b[3], b[4]
+                bw = max(1, bx2 - bx1)
+                bh = max(1, by2 - by1)
+                b_area = bw * bh
+                b_ar = bw / float(bh)
+
+                # Skip small floor noise
+                if b_area < min_area:
+                    continue
+
+                # Suppress floor-level corner clutter that is wider than tall
+                if by1 > (h * 0.55) and b_ar > 1.15 and bconf < 0.82:
+                    continue
+
+                filtered_candidates.append(b)
+
+            if len(filtered_candidates) > 0:
+                # Prioritize candidate by area to select the human silhouette
+                filtered_candidates.sort(
+                    key=lambda x: (x[2] - x[0]) * (x[3] - x[1]),
+                    reverse=True
+                )
+                primary_box = filtered_candidates[0]
+            else:
+                primary_box = cached_boxes[0]
+
+        # -------------------------------------------------------------
+        # MODULE 4 & 5: DUAL-GEOMETRY KINEMATICS (MEDIAPIPE + YOLO)
+        # -------------------------------------------------------------
         try:
-            is_fall_posture, processed_frame, metadata = ai_engine.process_frame(frame)
+            is_fall_posture, processed_frame, metadata = ai_engine.process_frame(
+                frame, yolo_box=primary_box
+            )
         except Exception as e:
             print(f"[ENGINE ERROR] Frame processing exception: {e}")
             processed_frame = frame
             is_fall_posture = False
             metadata = {}
 
-        # 2. Temporal Confirmation (3.0s Threshold)
+        # -------------------------------------------------------------
+        # MODULE 8: TEMPORAL PERSISTENCE FILTER (3.0s CONFIRMATION)
+        # -------------------------------------------------------------
         is_confirmed_fall, elapsed = temporal_filter.update(is_fall_posture)
 
-        # 3. Alert Dispatch & SQLite Audit Logging
+        # -------------------------------------------------------------
+        # MODULE 9, 10, 11: EVIDENCE LOGGING & CASCADING NOTIFICATIONS
+        # -------------------------------------------------------------
         if is_confirmed_fall:
             if not alert_already_dispatched:
                 timestamp_str = time.strftime("%Y-%m-%d %H:%M:%S")
                 snapshot_filename = f"FALL_{int(time.time())}.jpg"
                 snapshot_path = str(Config.SNAPSHOT_DIR / snapshot_filename)
 
-                # Persist evidence snapshot
+                # Persist snapshot
                 cv2.imwrite(snapshot_path, processed_frame)
 
-                # Log to SQLite database
+                # Log event to SQLite
                 db_handler.log_event(
                     aspect_ratio=metadata.get("aspect_ratio", 0.0),
                     torso_angle=metadata.get("torso_angle", 0.0),
                     snapshot_path=snapshot_path
                 )
 
-                # Dispatch cascading notifications
+                # Cascading alert delivery (Email -> ntfy -> Telegram)
                 dispatcher.dispatch_fallback_sequence(
                     snapshot_path=snapshot_path,
                     timestamp=timestamp_str
@@ -143,16 +217,22 @@ def generate_video_frames(source):
             if not is_fall_posture:
                 alert_already_dispatched = False
 
-        # Encode frame buffer to JPEG
-        ret, buffer = cv2.imencode('.jpg', processed_frame)
+        # Encode frame buffer with high-clarity JPEG configuration
+        ret, buffer = cv2.imencode('.jpg', processed_frame, encode_params)
         if not ret:
             continue
 
         frame_bytes = buffer.tobytes()
 
-        # Multipart MJPEG stream boundary
+        # Yield multipart MJPEG stream boundary
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+
+        # Synchronize video stream playback to eliminate MJPEG buffer lag
+        if not is_webcam:
+            elapsed_processing = time.time() - loop_start
+            sleep_duration = max(0.001, target_frame_time - elapsed_processing)
+            time.sleep(sleep_duration)
 
     cap.release()
 
@@ -219,7 +299,6 @@ def get_events():
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
 
-        # Ensure table schema exists to eliminate query crashes
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS fall_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

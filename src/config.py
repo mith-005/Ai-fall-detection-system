@@ -10,8 +10,7 @@ class Config:
     DB_PATH = BASE_DIR / "database" / "fall_events.db"
     SNAPSHOT_DIR = BASE_DIR / "data" / "snapshots"
     LOG_DIR = BASE_DIR / "data" / "logs"
-    YOLO_MODEL_PATH = BASE_DIR / "runs" / "detect" / "yolov8s_fall_custom" / "weights" / "best.pt"
-
+    YOLO_MODEL_PATH = BASE_DIR / "runs" / "detect" / "caucafall_yolov8s" / "weights" / "best.pt"
     # Thresholds
     FALL_ASPECT_RATIO_THRESH = 1.35
     FALL_ANGLE_THRESH = 32.0
